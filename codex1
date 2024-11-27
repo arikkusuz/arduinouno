@@ -1,0 +1,140 @@
+#include <LiquidCrystal.h>
+
+// Pin Definitions
+const int MOTION_SENSOR_PIN = 2;   // PIR motion sensor pin
+const int RESET_BUTTON_PIN = 3;    // Reset button pin
+const int VIBRATION_PIN = 4;       // Vibration motor pin
+const int RS = 12, EN = 11, D4 = 5, D5 = 4, D6 = 3, D7 = 2; // LCD Pins
+
+// Global Variables
+LiquidCrystal lcd(RS, EN, D4, D5, D6, D7);
+unsigned long startTime = 0;
+unsigned long totalElapsedTime = 0;
+unsigned long pauseStartTime = 0;
+bool isSeated = false;
+bool timerRunning = false;
+
+void setup() {
+  // Debug Serial
+  Serial.begin(9600);
+  
+  // Initialize pins
+  pinMode(MOTION_SENSOR_PIN, INPUT);
+  pinMode(RESET_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(VIBRATION_PIN, OUTPUT);
+  
+  // Initialize LCD
+  lcd.begin(16, 2);
+  lcd.clear();
+  lcd.print("Seat Timer System");
+  delay(2000);
+  lcd.clear();
+}
+
+void loop() {
+  // Read sensor and button states
+  int motionDetected = digitalRead(MOTION_SENSOR_PIN);
+  int resetButtonPressed = digitalRead(RESET_BUTTON_PIN) == LOW;
+
+  // Reset functionality
+  if (resetButtonPressed) {
+    resetTimer();
+    delay(200); // Debounce
+  }
+
+  // Seat detection logic
+  if (motionDetected && !isSeated) {
+    // First time sitting
+    digitalWrite(VIBRATION_PIN, HIGH);
+    delay(3000); // Vibrate for 3 seconds
+    digitalWrite(VIBRATION_PIN, LOW);
+    
+    startTimer();
+  }
+  else if (!motionDetected && isSeated) {
+    pauseTimer();
+  }
+  else if (motionDetected && !timerRunning) {
+    resumeTimer();
+  }
+
+  // Update display
+  updateDisplay();
+
+  // Debug information
+  Serial.print("Motion: ");
+  Serial.print(motionDetected);
+  Serial.print(" | Seated: ");
+  Serial.print(isSeated);
+  Serial.print(" | Timer Running: ");
+  Serial.println(timerRunning);
+
+  delay(100); // Small delay to prevent rapid state changes
+}
+
+void startTimer() {
+  startTime = millis();
+  isSeated = true;
+  timerRunning = true;
+  lcd.clear();
+  lcd.print("Timer Started");
+}
+
+void pauseTimer() {
+  if (timerRunning) {
+    // Calculate total time before pause
+    totalElapsedTime += millis() - startTime;
+    
+    // Activate vibration
+    digitalWrite(VIBRATION_PIN, HIGH);
+    delay(3000);
+    digitalWrite(VIBRATION_PIN, LOW);
+
+    // Set pause state
+    isSeated = false;
+    timerRunning = false;
+    pauseStartTime = millis();
+  }
+}
+
+void resumeTimer() {
+  startTime = millis();
+  isSeated = true;
+  timerRunning = true;
+}
+
+void resetTimer() {
+  startTime = 0;
+  totalElapsedTime = 0;
+  isSeated = false;
+  timerRunning = false;
+  lcd.clear();
+  lcd.print("Timer Reset");
+  delay(1000);
+}
+
+void updateDisplay() {
+  lcd.setCursor(0, 0);
+  lcd.print("Time: ");
+  
+  unsigned long currentTime;
+  if (timerRunning) {
+    currentTime = totalElapsedTime + (millis() - startTime);
+  } else {
+    currentTime = totalElapsedTime;
+  }
+  
+  // Convert milliseconds to minutes and seconds
+  int minutes = currentTime / 60000;
+  int seconds = (currentTime % 60000) / 1000;
+  
+  // Clear previous time
+  lcd.setCursor(6, 0);
+  
+  // Format time display
+  lcd.print(minutes < 10 ? "0" : "");
+  lcd.print(minutes);
+  lcd.print(":");
+  lcd.print(seconds < 10 ? "0" : "");
+  lcd.print(seconds);
+}
