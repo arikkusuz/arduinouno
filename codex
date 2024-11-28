@@ -1,136 +1,170 @@
-#FIRST OF ALL WE NEED TO INSTALL LIBRABRY (LiquidCrystal) and (Arduino IDE)
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
 
-#include <LiquidCrystal.h>
+#define trigPin A0 
+#define echoPin A1 
 
-// Pin Definitions
-const int SENSOR_PIN = 2;      // PIR Motion Sensor Pin
-const int RESET_BUTTON_PIN = 3; // Reset Button PIN
-const int VIBRATION_PIN = 4;    // Vibration Pin
-const int RS = 12, EN = 11, D4 = 5, D5 = 4, D6 = 3, D7 = 2; // LCD Pins
+LiquidCrystal_I2C lcd(0x27, 16, 2);
 
-// Global Variables
-LiquidCrystal lcd(RS, EN, D4, D5, D6, D7);
 unsigned long startTime = 0;
-unsigned long elapsedTime = 0;
 unsigned long pauseTime = 0;
-bool isSitting = false;
-bool isPaused = false;
-bool isFirstSit = true;
+unsigned long totalPausedTime = 0;
+unsigned long lastSessionTime = 0;
+unsigned long lastDetectionTime = 0;
+bool timerRunning = false;
+bool timerPaused = false;
+
+const int MAX_DISTANCE_CM = 50;
+const int PRESENCE_DISTANCE_CM = 30;  
+const unsigned long PAUSE_TIMEOUT = 13000;
 
 void setup() {
-  // Initialize pins
-  pinMode(SENSOR_PIN, INPUT);
-  pinMode(RESET_BUTTON_PIN, INPUT_PULLUP);
-  pinMode(VIBRATION_PIN, OUTPUT);
-  
-  // Initialize LCD
-  lcd.begin(16, 2);
+  Serial.begin(9600);
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+
+  lcd.init();
+  lcd.backlight();
   lcd.clear();
-  lcd.print("Seat Timer System");
+  
+  lcd.setCursor(0,0);
+  lcd.print("Timer Table SYS");
+  lcd.setCursor(0,1);
+  lcd.print("G12 - ABM 06");
   delay(2000);
   lcd.clear();
 }
 
 void loop() {
-  // Check sensor state
-  int sensorState = digitalRead(SENSOR_PIN);
+  long distance = measureDistance();
   
-  // Check reset button
-  if (digitalRead(RESET_BUTTON_PIN) == LOW) {
-    resetTimer();
-    delay(200);
-  }
-  
-  // Sitting detection
-  if (sensorState == HIGH && !isSitting) {
-    // Vibrate first for first sit
-    if (isFirstSit) {
-      digitalWrite(VIBRATION_PIN, HIGH);
-      delay(3000);  // Vibrate for 3 seconds
-      digitalWrite(VIBRATION_PIN, LOW);
-      isFirstSit = false;
+  if (distance > 0 && distance <= PRESENCE_DISTANCE_CM) {
+    lastDetectionTime = millis();
+    
+    if (!timerRunning) {
+      startTimer();
+    } 
+    
+    if (timerPaused) {
+      resumeTimer();
     }
-    startTimer();
+  } else {
+    if (timerRunning && !timerPaused) {
+      pauseTimer();
+    }
+    
+    if (timerPaused && (millis() - pauseTime > PAUSE_TIMEOUT)) {
+      resetTimer();
+    }
   }
   
-  // Not sitting detection
-  if (sensorState == LOW && isSitting) {
-    pauseTimer();
-  }
+  displayTimerAndDistance(distance);
   
-  // Resume timer if back on seat
-  if (sensorState == HIGH && isPaused) {
-    resumeTimer();
-  }
+  delay(200);
+}
+
+long measureDistance() {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
   
-  // Update display
-  updateDisplay();
+  long duration = pulseIn(echoPin, HIGH);
+  long distanceCm = (duration/2) / 29.1;
   
-  delay(100); // little bit of delay to prevent rapid, errors
+  return (distanceCm > 0 && distanceCm <= MAX_DISTANCE_CM) ? distanceCm : 0;
 }
 
 void startTimer() {
-  if (!isSitting) {
-    startTime = millis();
-    isSitting = true;
-    isPaused = false;
-    lcd.clear();
-  }
+  startTime = millis();
+  timerRunning = true;
+  timerPaused = false;
+  totalPausedTime = 0;
+  
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("Student Detected");
+  lcd.setCursor(0,1);
+  lcd.print("Timer Started");
+  delay(1500);
 }
 
 void pauseTimer() {
-  if (isSitting && !isPaused) {
-    elapsedTime += millis() - startTime;
-    isPaused = true;
-    isSitting = false;
-    
-    // Vibrate for 3 seconds
-    digitalWrite(VIBRATION_PIN, HIGH);
-    delay(3000);
-    digitalWrite(VIBRATION_PIN, LOW);
-  }
+  pauseTime = millis();
+  timerPaused = true;
 }
 
 void resumeTimer() {
-  if (isPaused) {
-    startTime = millis();
-    isSitting = true;
-    isPaused = false;
-  }
+  totalPausedTime += (millis() - pauseTime);
+  timerPaused = false;
 }
 
 void resetTimer() {
-  startTime = 0;
-  elapsedTime = 0;
-  isSitting = false;
-  isPaused = false;
-  isFirstSit = true;  // Reset first sit flag
+  if (timerRunning) {
+    lastSessionTime = timerPaused 
+      ? (pauseTime - startTime - totalPausedTime)
+      : (millis() - startTime - totalPausedTime);
+  } else {
+    lastSessionTime = 0;
+  }
+  
   lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("Last Session:");
+  
+  unsigned long seconds = lastSessionTime / 1000;
+  unsigned long minutes = seconds / 60;
+  seconds %= 60;
+  
+  lcd.setCursor(0,1);
+  lcd.print("Time: ");
+  if (minutes < 10) lcd.print("0");
+  lcd.print(minutes);
+  lcd.print(":");
+  if (seconds < 10) lcd.print("0");
+  lcd.print(seconds);
+  
+  delay(3000);
+  
+  startTime = 0;
+  pauseTime = 0;
+  totalPausedTime = 0;
+  timerRunning = false;
+  timerPaused = false;
+  
+  lcd.clear();
+  lcd.setCursor(0,0);
   lcd.print("Timer Reset");
+  lcd.setCursor(0, 1);
+  lcd.print("No Object Detected");
   delay(1000);
 }
 
-void updateDisplay() {
-  lcd.setCursor(0, 0);
+void displayTimerAndDistance(long distance) {
+  if (!timerRunning) return;
+  
+  unsigned long currentTimer = timerPaused 
+    ? (pauseTime - startTime - totalPausedTime)
+    : (millis() - startTime - totalPausedTime);
+  
+  unsigned long seconds = currentTimer / 1000;
+  unsigned long minutes = seconds / 60;
+  seconds %= 60;
+  
+  lcd.clear();
+  
+  lcd.setCursor(0,0);
   lcd.print("Time: ");
-  
-  unsigned long currentTime;
-  if (isSitting) {
-    currentTime = elapsedTime + (millis() - startTime);
-  } else if (isPaused) {
-    currentTime = elapsedTime;
-  } else {
-    currentTime = 0;
-  }
-  
-  // Convert milliseconds to minutes and seconds
-  int minutes = currentTime / 60000;
-  int seconds = (currentTime % 60000) / 1000;
-  
-  // Format time display
-  lcd.print(minutes < 10 ? "0" : "");
+  if (minutes < 10) lcd.print("0");
   lcd.print(minutes);
   lcd.print(":");
-  lcd.print(seconds < 10 ? "0" : "");
+  if (seconds < 10) lcd.print("0");
   lcd.print(seconds);
+  
+  lcd.setCursor(0,1);
+  lcd.print("Dist:");
+  lcd.print(distance);
+  lcd.print("cm ");
+  lcd.print(timerPaused ? "| Pause" : "| Run");
 }
